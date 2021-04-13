@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2022 Intel Corporation
+
+FROM alpine:3.16
+WORKDIR /
+
+RUN apk add --no-cache python3 py3-pip util-linux-misc && \
+    pip install --no-cache-dir adqsetup==2.0 && apk del --no-cache py3-pip
+
+USER 1001

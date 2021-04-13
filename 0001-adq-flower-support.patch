@@ -1,0 +1,406 @@
+From d9daf89e5788a27d0fca5946c7db1665cddb82e2 Mon Sep 17 00:00:00 2001
+From: Lukasz Pawlik <lukaszx.pawlik@intel.com>
+Date: Fri, 22 Apr 2022 10:49:20 +0000
+Subject: [PATCH 1/2] Add support for hw_tc and ports for flower filter
+
+This patch adds support for setting HW traffic classes and ports to
+flower filter. HW traffic classes 0 through 15 are represented using the
+reserved classid values :ffe0 - :ffef.
+Example:
+Match Dst IPv4,Dst Port and route to TC1:
+  prio 1 flower dst_ip 192.168.1.1/32\
+  ip_proto udp dst_port 12000 skip_sw\
+  hw_tc 1
+
+filter pref 1 flower chain 0
+filter pref 1 flower chain 0 handle 0x1 hw_tc 1
+  eth_type ipv4
+  ip_proto udp
+  dst_ip 192.168.1.1
+  dst_port 12000
+  skip_sw
+  in_hw
+---
+ filter_linux.go | 82 ++++++++++++++++++++++++++++++++++++++++---------
+ nl/tc_linux.go  | 11 +++++++
+ qdisc.go        |  5 +--
+ 3 files changed, 82 insertions(+), 16 deletions(-)
+
+diff --git a/filter_linux.go b/filter_linux.go
+index 4c6d1cf..1f79682 100644
+--- a/filter_linux.go
++++ b/filter_linux.go
+@@ -57,15 +57,23 @@ type Flower struct {
+ 	DestIPMask    net.IPMask
+ 	SrcIP         net.IP
+ 	SrcIPMask     net.IPMask
++	TcpSrcPort    uint16
++	TcpDestPort   uint16
++	UdpSrcPort    uint16
++	UdpDestPort   uint16
++	SctpSrcPort   uint16
++	SctpDestPort  uint16
+ 	EthType       uint16
++	IPProto       uint8
+ 	EncDestIP     net.IP
+ 	EncDestIPMask net.IPMask
+ 	EncSrcIP      net.IP
+ 	EncSrcIPMask  net.IPMask
+ 	EncDestPort   uint16
+ 	EncKeyId      uint32
+-
+-	Actions []Action
++	ClassID       uint32
++	Flags         uint32
++	Actions       []Action
+ }
+ 
+ func (filter *Flower) Attrs() *FilterAttrs {
+@@ -100,18 +108,33 @@ func (filter *Flower) encodeIP(parent *nl.RtAttr, ip net.IP, mask net.IPMask, v4
+ }
+ 
+ func (filter *Flower) encode(parent *nl.RtAttr) error {
+-	if filter.EthType != 0 {
+-		parent.AddRtAttr(nl.TCA_FLOWER_KEY_ETH_TYPE, htons(filter.EthType))
++	if filter.DestIP != nil {
++		filter.encodeIP(parent, filter.DestIP, filter.DestIPMask,
++			nl.TCA_FLOWER_KEY_IPV4_DST, nl.TCA_FLOWER_KEY_IPV6_DST,
++			nl.TCA_FLOWER_KEY_IPV4_DST_MASK, nl.TCA_FLOWER_KEY_IPV6_DST_MASK)
+ 	}
+ 	if filter.SrcIP != nil {
+ 		filter.encodeIP(parent, filter.SrcIP, filter.SrcIPMask,
+ 			nl.TCA_FLOWER_KEY_IPV4_SRC, nl.TCA_FLOWER_KEY_IPV6_SRC,
+ 			nl.TCA_FLOWER_KEY_IPV4_SRC_MASK, nl.TCA_FLOWER_KEY_IPV6_SRC_MASK)
+ 	}
+-	if filter.DestIP != nil {
+-		filter.encodeIP(parent, filter.DestIP, filter.DestIPMask,
+-			nl.TCA_FLOWER_KEY_IPV4_DST, nl.TCA_FLOWER_KEY_IPV6_DST,
+-			nl.TCA_FLOWER_KEY_IPV4_DST_MASK, nl.TCA_FLOWER_KEY_IPV6_DST_MASK)
++	if filter.TcpDestPort != 0 {
++		parent.AddRtAttr(nl.TCA_FLOWER_KEY_TCP_DST, htons(filter.TcpDestPort))
++	}
++	if filter.TcpSrcPort != 0 {
++		parent.AddRtAttr(nl.TCA_FLOWER_KEY_TCP_SRC, htons(filter.TcpSrcPort))
++	}
++	if filter.UdpDestPort != 0 {
++		parent.AddRtAttr(nl.TCA_FLOWER_KEY_UDP_DST, htons(filter.UdpDestPort))
++	}
++	if filter.UdpSrcPort != 0 {
++		parent.AddRtAttr(nl.TCA_FLOWER_KEY_UDP_SRC, htons(filter.UdpSrcPort))
++	}
++	if filter.SctpDestPort != 0 {
++		parent.AddRtAttr(nl.TCA_FLOWER_KEY_SCTP_DST, htons(filter.SctpDestPort))
++	}
++	if filter.SctpSrcPort != 0 {
++		parent.AddRtAttr(nl.TCA_FLOWER_KEY_SCTP_SRC, htons(filter.SctpSrcPort))
+ 	}
+ 	if filter.EncSrcIP != nil {
+ 		filter.encodeIP(parent, filter.EncSrcIP, filter.EncSrcIPMask,
+@@ -129,11 +152,25 @@ func (filter *Flower) encode(parent *nl.RtAttr) error {
+ 	if filter.EncKeyId != 0 {
+ 		parent.AddRtAttr(nl.TCA_FLOWER_KEY_ENC_KEY_ID, htonl(filter.EncKeyId))
+ 	}
+-
+-	actionsAttr := parent.AddRtAttr(nl.TCA_FLOWER_ACT, nil)
+-	if err := EncodeActions(actionsAttr, filter.Actions); err != nil {
+-		return err
++	if filter.IPProto != 0 {
++		parent.AddRtAttr(nl.TCA_FLOWER_KEY_IP_PROTO, nl.Uint8Attr(filter.IPProto))
++	}
++	if len(filter.Actions) > 0 {
++		actionsAttr := parent.AddRtAttr(nl.TCA_FLOWER_ACT, nil)
++		if err := EncodeActions(actionsAttr, filter.Actions); err != nil {
++			return err
++		}
++	}
++	if filter.EthType != 0 {
++		parent.AddRtAttr(nl.TCA_FLOWER_KEY_ETH_TYPE, htons(filter.EthType))
++	}
++	if filter.ClassID != 0 {
++		parent.AddRtAttr(nl.TCA_FLOWER_CLASSID, nl.Uint32Attr(filter.ClassID))
++	}
++	if filter.Flags != 0 {
++		parent.AddRtAttr(nl.TCA_FLOWER_FLAGS, nl.Uint32Attr(filter.Flags))
+ 	}
++
+ 	return nil
+ }
+ 
+@@ -171,6 +208,24 @@ func (filter *Flower) decode(data []syscall.NetlinkRouteAttr) error {
+ 			if err != nil {
+ 				return err
+ 			}
++		case nl.TCA_FLOWER_CLASSID:
++			filter.ClassID = native.Uint32(datum.Value)
++		case nl.TCA_FLOWER_FLAGS:
++			filter.Flags = native.Uint32(datum.Value)
++		case nl.TCA_FLOWER_KEY_TCP_DST:
++			filter.TcpDestPort = ntohs(datum.Value)
++		case nl.TCA_FLOWER_KEY_UDP_DST:
++			filter.UdpDestPort = ntohs(datum.Value)
++		case nl.TCA_FLOWER_KEY_SCTP_DST:
++			filter.SctpDestPort = ntohs(datum.Value)
++		case nl.TCA_FLOWER_KEY_TCP_SRC:
++			filter.TcpSrcPort = ntohs(datum.Value)
++		case nl.TCA_FLOWER_KEY_UDP_SRC:
++			filter.UdpSrcPort = ntohs(datum.Value)
++		case nl.TCA_FLOWER_KEY_SCTP_SRC:
++			filter.SctpSrcPort = ntohs(datum.Value)
++		case nl.TCA_FLOWER_KEY_IP_PROTO:
++			filter.IPProto = uint8(datum.Value[0])
+ 		}
+ 	}
+ 	return nil
+@@ -238,7 +293,6 @@ func (h *Handle) filterModify(filter Filter, flags int) error {
+ 	req.AddData(nl.NewRtAttr(nl.TCA_KIND, nl.ZeroTerminated(filter.Type())))
+ 
+ 	options := nl.NewRtAttr(nl.TCA_OPTIONS, nil)
+-
+ 	switch filter := filter.(type) {
+ 	case *U32:
+ 		sel := filter.Sel
+@@ -581,7 +635,7 @@ func EncodeActions(attr *nl.RtAttr, actions []Action) error {
+ 			table := attr.AddRtAttr(tabIndex, nil)
+ 			tabIndex++
+ 			table.AddRtAttr(nl.TCA_ACT_KIND, nl.ZeroTerminated("skbedit"))
+-			aopts := table.AddRtAttr(nl.TCA_ACT_OPTIONS, nil)
++			aopts := table.AddRtAttr(nl.TCA_ACT_OPTIONS|unix.NLA_F_NESTED, nil)
+ 			skbedit := nl.TcSkbEdit{}
+ 			toTcGen(action.Attrs(), &skbedit.TcGen)
+ 			aopts.AddRtAttr(nl.TCA_SKBEDIT_PARMS, skbedit.Serialize())
+diff --git a/nl/tc_linux.go b/nl/tc_linux.go
+index eb05ff1..15248ca 100644
+--- a/nl/tc_linux.go
++++ b/nl/tc_linux.go
+@@ -1015,9 +1015,20 @@ const (
+ 	TCA_FLOWER_KEY_ENC_OPTS
+ 	TCA_FLOWER_KEY_ENC_OPTS_MASK
+ 
++	TCA_FLOWER_IN_HW_COUNT /* be32 */
++
+ 	__TCA_FLOWER_MAX
+ )
+ 
++// tca flags definitions from include/uapi/linux/pkt_cls.h
++const (
++	TCA_CLS_FLAGS_SKIP_HW   uint32 = 1 << iota /* don't offload filter to HW */
++	TCA_CLS_FLAGS_SKIP_SW                      /* don't use filter in SW */
++	TCA_CLS_FLAGS_IN_HW                        /* filter is offloaded to HW */
++	TCA_CLS_FLAGS_NOT_IN_HW                    /* filter isn't offloaded to HW */
++	TCA_CLS_FLAGS_VERBOSE                      /* verbose logging */
++)
++
+ // struct tc_sfq_qopt {
+ // 	unsigned	quantum;	/* Bytes per round allocated to flow */
+ // 	int		perturb_period;	/* Period of hash perturbation */
+diff --git a/qdisc.go b/qdisc.go
+index f594c9c..7ff18f6 100644
+--- a/qdisc.go
++++ b/qdisc.go
+@@ -13,8 +13,9 @@ const (
+ 	PRIORITY_MAP_LEN = 16
+ )
+ const (
+-	HANDLE_MIN_INGRESS = 0xFFFFFFF2
+-	HANDLE_MIN_EGRESS  = 0xFFFFFFF3
++	HANDLE_MIN_INGRESS  = 0xFFFFFFF2
++	HANDLE_MIN_EGRESS   = 0xFFFFFFF3
++	HANDLE_MIN_PRIORITY = 0xFFFFFFE0
+ )
+ 
+ type Qdisc interface {
+-- 
+2.25.1
+
+
+From 4b885f78525fdb0835e6ed55f3961333d5a6741f Mon Sep 17 00:00:00 2001
+From: Lukasz Pawlik <lukaszx.pawlik@intel.com>
+Date: Mon, 25 Apr 2022 12:27:55 +0000
+Subject: [PATCH 2/2] Add support for qdisc MQPRIO
+
+This patch adds support for qdisc mqprio. It is a simple queuing discipline
+that allows mapping traffic flows to hardware queue ranges using priorities
+and a configurable priority to traffic class mapping.
+Example
+  root mqprio num_tc 2 map 0 1 queues 2@0 6@2 hw 1 mode channel
+  qdisc mqprio 8007: root  tc 2 map 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+             queues:(0:1) (2:7)
+             mode:channel
+             shaper:dcb
+---
+ nl/tc_linux.go | 37 +++++++++++++++++++++++++++++++++++++
+ qdisc.go       | 26 ++++++++++++++++++++++++++
+ qdisc_linux.go | 43 +++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 106 insertions(+)
+
+diff --git a/nl/tc_linux.go b/nl/tc_linux.go
+index 15248ca..c3e315c 100644
+--- a/nl/tc_linux.go
++++ b/nl/tc_linux.go
+@@ -98,6 +98,7 @@ const (
+ 	SizeofTcSfqQopt      = 0x0b
+ 	SizeofTcSfqRedStats  = 0x18
+ 	SizeofTcSfqQoptV1    = SizeofTcSfqQopt + SizeofTcSfqRedStats + 0x1c
++	SizeofTcMqPrioOpt    = 0x54
+ )
+ 
+ // struct tcmsg {
+@@ -1128,3 +1129,39 @@ func DeserializeTcSfqQoptV1(b []byte) *TcSfqQoptV1 {
+ func (x *TcSfqQoptV1) Serialize() []byte {
+ 	return (*(*[SizeofTcSfqQoptV1]byte)(unsafe.Pointer(x)))[:]
+ }
++
++const (
++	TCA_MQPRIO_UNSPEC = iota
++	TCA_MQPRIO_MODE
++	TCA_MQPRIO_SHAPER
++	TCA_MQPRIO_MIN_RATE64
++	TCA_MQPRIO_MAX_RATE64
++	__TCA_MQPRIO_MAX
++)
++
++// struct tc_mqprio_qopt {
++// 	__u8	num_tc;
++// 	__u8	prio_tc_map[TC_QOPT_BITMASK + 1];
++// 	__u8	hw;
++// 	__u16	count[TC_QOPT_MAX_QUEUE];
++// 	__u16	offset[TC_QOPT_MAX_QUEUE];
++// };
++type TcMqPrioQopt struct {
++	NumTc     uint8
++	PrioTcMap [16]uint8
++	Hw        uint8
++	Count     [16]uint16
++	Offset    [16]uint16
++}
++
++func (x *TcMqPrioQopt) Len() int {
++	return SizeofTcMqPrioOpt
++}
++
++func DeserializeTcMqPrioOpt(b []byte) *TcMqPrioQopt {
++	return (*TcMqPrioQopt)(unsafe.Pointer(&b[0:SizeofTcMqPrioOpt][0]))
++}
++
++func (x *TcMqPrioQopt) Serialize() []byte {
++	return (*(*[SizeofTcMqPrioOpt]byte)(unsafe.Pointer(x)))[:]
++}
+diff --git a/qdisc.go b/qdisc.go
+index 7ff18f6..bb7091c 100644
+--- a/qdisc.go
++++ b/qdisc.go
+@@ -3,6 +3,8 @@ package netlink
+ import (
+ 	"fmt"
+ 	"math"
++
++	"github.com/vishvananda/netlink/nl"
+ )
+ 
+ const (
+@@ -365,3 +367,27 @@ func (qdisc *Sfq) Attrs() *QdiscAttrs {
+ func (qdisc *Sfq) Type() string {
+ 	return "sfq"
+ }
++
++type MqPrio struct {
++	QdiscAttrs
++	Opt       nl.TcMqPrioQopt
++	Mode      uint16
++	Shaper    uint16
++	MinRate64 uint64
++	MaxRate64 uint64
++}
++
++func (qdisc *MqPrio) Attrs() *QdiscAttrs {
++	return &qdisc.QdiscAttrs
++}
++
++func (qdisc *MqPrio) Type() string {
++	return "mqprio"
++}
++
++func (qdisc *MqPrio) String() string {
++	return fmt.Sprintf(
++		"{%v -- Opt %+v, Mode: %v Shaper %v MinRate64 %v MaxRate64 %v}",
++		qdisc.Attrs(), qdisc.Opt, qdisc.Mode, qdisc.Shaper, qdisc.MinRate64, qdisc.MaxRate64,
++	)
++}
+diff --git a/qdisc_linux.go b/qdisc_linux.go
+index e182e1c..4f02bdd 100644
+--- a/qdisc_linux.go
++++ b/qdisc_linux.go
+@@ -294,6 +294,20 @@ func qdiscPayload(req *nl.NetlinkRequest, qdisc Qdisc) error {
+ 		opt.TcSfqQopt.Divisor = qdisc.Divisor
+ 
+ 		options = nl.NewRtAttr(nl.TCA_OPTIONS, opt.Serialize())
++	case *MqPrio:
++		options = nl.NewRtAttr(nl.TCA_OPTIONS, qdisc.Opt.Serialize())
++		if qdisc.Mode != 0 {
++			options.AddRtAttr(nl.TCA_MQPRIO_MODE, nl.Uint16Attr(qdisc.Mode))
++		}
++		if qdisc.Shaper != 0 {
++			options.AddRtAttr(nl.TCA_MQPRIO_SHAPER, nl.Uint16Attr(qdisc.Shaper))
++		}
++		if qdisc.MaxRate64 != 0 {
++			options.AddRtAttr(nl.TCA_MQPRIO_MAX_RATE64, nl.Uint64Attr(qdisc.MaxRate64))
++		}
++		if qdisc.MinRate64 != 0 {
++			options.AddRtAttr(nl.TCA_MQPRIO_MIN_RATE64, nl.Uint64Attr(qdisc.MinRate64))
++		}
+ 	default:
+ 		options = nil
+ 	}
+@@ -380,6 +394,8 @@ func (h *Handle) QdiscList(link Link) ([]Qdisc, error) {
+ 					qdisc = &Netem{}
+ 				case "sfq":
+ 					qdisc = &Sfq{}
++				case "mqprio":
++					qdisc = &MqPrio{}
+ 				default:
+ 					qdisc = &GenericQdisc{QdiscType: qdiscType}
+ 				}
+@@ -439,6 +455,10 @@ func (h *Handle) QdiscList(link Link) ([]Qdisc, error) {
+ 					if err := parseSfqData(qdisc, attr.Value); err != nil {
+ 						return nil, err
+ 					}
++				case "mqprio":
++					if err := parseMqprioData(qdisc, attr.Value); err != nil {
++						return nil, err
++					}
+ 
+ 					// no options for ingress
+ 				}
+@@ -616,6 +636,29 @@ func parseSfqData(qdisc Qdisc, value []byte) error {
+ 	return nil
+ }
+ 
++func parseMqprioData(qdisc Qdisc, value []byte) error {
++	mqprio := qdisc.(*MqPrio)
++	opt := nl.DeserializeTcMqPrioOpt(value)
++	data, err := nl.ParseRouteAttr(value[nl.SizeofTcMqPrioOpt:])
++	if err != nil {
++		return err
++	}
++	for _, datum := range data {
++		switch datum.Attr.Type {
++		case nl.TCA_MQPRIO_MODE:
++			mqprio.Mode = native.Uint16(datum.Value)
++		case nl.TCA_MQPRIO_SHAPER:
++			mqprio.Shaper = native.Uint16(datum.Value)
++		case nl.TCA_MQPRIO_MAX_RATE64:
++			mqprio.MaxRate64 = native.Uint64(datum.Value)
++		case nl.TCA_MQPRIO_MIN_RATE64:
++			mqprio.MinRate64 = native.Uint64(datum.Value)
++		}
++	}
++	mqprio.Opt = *opt
++	return nil
++}
++
+ const (
+ 	TIME_UNITS_PER_SEC = 1000000
+ )
+-- 
+2.25.1
+

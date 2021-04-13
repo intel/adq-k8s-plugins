@@ -1,0 +1,98 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2022 Intel Corporation
+
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    prometheus.io/port: "33000"
+    prometheus.io/scrape: "true"
+  labels:
+    name: adq-exporter
+  name: adq-exporter
+  namespace: kube-system
+spec:
+  ports:
+  - name: metrics
+    port: 33000
+    protocol: TCP
+    targetPort: 33000
+  selector:
+    name: adq-cni-dp
+  type: ClusterIP
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  labels:
+    app.kubernetes.io/component: exporter
+    app.kubernetes.io/name: adq-exporter
+    app.kubernetes.io/version: 0.0.4
+  name: adq-exporter
+  namespace: monitoring
+spec:
+  endpoints:
+  - bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    interval: 15s
+    port: metrics
+    relabelings:
+    - action: replace
+      regex: (.*)
+      replacement: $1
+      sourceLabels:
+      - __meta_kubernetes_pod_node_name
+      targetLabel: instance
+    scheme: http
+    tlsConfig:
+      insecureSkipVerify: true
+  jobLabel: app.kubernetes.io/name
+  namespaceSelector:
+    matchNames:
+    - kube-system
+  selector:
+    matchLabels:
+      name: adq-exporter
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: adq-prometheus-exporter
+  namespace: kube-system
+spec:
+  selector:
+      matchLabels:
+        name: adq-prometheus-exporter
+  template:
+    metadata:
+      labels:
+        name: adq-prometheus-exporter
+    spec:
+      hostNetwork: true
+      serviceAccountName: adq
+      containers:
+      - name: adq-prometheus-exporter
+        image: <YOUR_REGISTRY>/adqexporter:22.06-1
+        command: ["/adq-exporter"]
+        env:
+          - name: NODE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
+        securityContext:
+          runAsUser: 0
+          readOnlyRootFilesystem: true
+        ports:
+        - name: metrics
+          containerPort: 33000
+        volumeMounts:
+        - name: pod-resources
+          mountPath: /var/lib/kubelet/pod-resources/kubelet.sock
+          readOnly: true
+      volumes:
+      - name: pod-resources
+        hostPath:
+          path: /var/lib/kubelet/pod-resources/kubelet.sock
+          type: Socket
+

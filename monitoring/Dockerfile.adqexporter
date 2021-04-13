@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2022 Intel Corporation
+
+# Build the manager binary
+FROM golang:1.18 as builder
+ARG BUILD_VERSION
+WORKDIR /workspace
+# Copy the Go Modules manifests
+COPY go.mod go.mod
+COPY go.sum go.sum
+
+# Pull and patch netlink library
+COPY 0001-adq-flower-support.patch .
+COPY 0002-Support-Mark-in-the-U32-filters.patch .
+
+RUN git clone https://github.com/vishvananda/netlink.git && cd netlink && git checkout 5e915e0149386ce3d02379ff93f4c0a5601779d5
+RUN cd netlink && git apply ../0001-adq-flower-support.patch && git apply ../0002-Support-Mark-in-the-U32-filters.patch
+
+# cache deps before building and copying source so that we don't need to re-download as much
+# and so that source changes don't invalidate our downloaded layer
+RUN go mod download
+# Copy the go source
+COPY cmd/adq-exporter cmd/adq-exporter
+
+COPY pkg pkg
+
+# building the  Prometheus exporter
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -ldflags "-X main.BuildVersion=$BUILD_VERSION" -a -o ./bin/adq-exporter ./cmd/adq-exporter/main.go
+ 
+FROM alpine:3.15
+WORKDIR /
+
+COPY --from=builder /workspace/bin/adq-exporter .
+

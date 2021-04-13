@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2022 Intel Corporation
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: adq-cluster-config
+  namespace: kube-system
+data:
+  adq-cluster-config.json: |-
+    {
+      "NodeConfigs": [ 
+        {
+          "Labels": {
+            "kubernetes.io/os": "linux"
+          },
+          "EgressMode": "skbedit",
+          "FilterPrio": 1,
+          "Globals": {
+            "Dev": "ens801f0",
+            "Queues": 16,
+            "Busypoll": 0,
+            "Busyread": 0,
+            "Txadapt": false,
+            "Txusecs": 50,
+            "Rxadapt": false,
+            "Rxusecs": 50
+          },
+          "TrafficClass": [
+            { 
+              "Queues": 4,
+              "Pollers": 4
+            },
+            { 
+              "Queues": 4,
+              "Pollers": 4
+            },
+            { 
+              "Queues": 4,
+              "Pollers": 4
+            },
+            { 
+              "Queues": 4,
+              "Pollers": 4
+            },
+            { 
+              "Queues": 32,
+              "Mode": "shared"
+            }
+          ]
+        }
+      ]
+    }

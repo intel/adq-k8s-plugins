@@ -1,0 +1,11 @@
+Intel Application Device Queues Plugins for Kubernetes
+Copyright (c) 2022 Intel Corporation
+
+This product includes software developed at Intel Corporation (www.intel.com).
+
+The initial developer of some parts of the deploy/k8s/entrypoint.sh file,
+which are copied from, derived from, or inspired by multus-cni is
+k8snetworkplumbingwg (https://github.com/k8snetworkplumbingwg/multus-cni).
+
+The original developer of the 0002-Support-Mark-in-the-U32-filters.patch
+file is Jecky Pei.
