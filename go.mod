@@ -16,14 +16,14 @@ require (
 	github.com/safchain/ethtool v0.2.0
 	github.com/sirupsen/logrus v1.9.0
 	github.com/vishvananda/netlink v1.2.1-beta.2
-	golang.org/x/sys v0.5.0
+	golang.org/x/sys v0.6.0
 	golang.org/x/time v0.0.0-20220722155302-e5dcc9cfc0b9
 	google.golang.org/grpc v1.48.0
 	k8s.io/api v0.24.3
 	k8s.io/apimachinery v0.24.3
 	k8s.io/client-go v1.5.2
 	k8s.io/kubelet v0.24.3
-	k8s.io/kubernetes v1.24.3
+	k8s.io/kubernetes v1.24.15
 	sigs.k8s.io/controller-runtime v0.12.3
 
 )
@@ -61,10 +61,10 @@ require (
 	github.com/prometheus/procfs v0.8.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/vishvananda/netns v0.0.0-20211101163701-50045581ed74 // indirect
-	golang.org/x/net v0.7.0 // indirect
+	golang.org/x/net v0.8.0 // indirect
 	golang.org/x/oauth2 v0.0.0-20220722155238-128564f6959c // indirect
-	golang.org/x/term v0.5.0 // indirect
-	golang.org/x/text v0.7.0 // indirect
+	golang.org/x/term v0.6.0 // indirect
+	golang.org/x/text v0.8.0 // indirect
 	gomodules.xyz/jsonpatch/v2 v2.2.0 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/genproto v0.0.0-20220803205849-8f55acc8769f // indirect
