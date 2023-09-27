@@ -118,9 +118,9 @@ Minimum kernel version supported is 5.6 which must include modules sch_mqprio, a
 | containerd.io | 1.6.6 |
 | Ice Driver | ice-1.9.11 |
 | CRI-O | 1.22.5 |
-| kubelet | 1.24.3 |
-| kubeadm | 1.24.3 |
-| kubectl | 1.24.3 |
+| kubelet | 1.25.11 |
+| kubeadm | 1.25.11 |
+| kubectl | 1.25.11 |
 | Cilium | 1.12.0 |
 
 ## Proxy settings
