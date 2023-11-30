@@ -32,7 +32,7 @@ type adqConf struct {
 	Master             string                        `json:"-"`
 	TcInfo             []*kubeletclient.ResourceInfo `json:"-"`
 	Tunneling          string                        `json:"tunneling,omitempty"`
-	TunnelingIntefrace string                        `json:"tunneling-interface,omitempty"`
+	TunnelingInterface string                        `json:"tunneling-interface,omitempty"`
 
 	KubeletServerName string `json:"kubeletServerName,omitempty"`
 	KubeletPort       string `json:"kubeletPort,omitempty"`
@@ -87,7 +87,7 @@ func loadConf(bytes []byte) (*adqConf, error) {
 		return nil, fmt.Errorf("unsupported \"tunneling\" value - can be empty or \"disabled\" or \"vxlan\"")
 	}
 
-	if n.Tunneling == "vxlan" && n.TunnelingIntefrace == "" {
+	if n.Tunneling == "vxlan" && n.TunnelingInterface == "" {
 		return nil, fmt.Errorf("\"tunneling-interface\" can't be empty when tunneling is enabled")
 	}
 
@@ -185,15 +185,15 @@ func (n *adqConf) delTC(ip net.IP) error {
 	}
 
 	if n.Tunneling == "vxlan" {
-		vObject, err := adqtcInit(n.TunnelingIntefrace, true)
+		vObject, err := adqtcInit(n.TunnelingInterface, true)
 		if err != nil {
-			logger.Errorf("Failed to init netlinktc for %s", n.TunnelingIntefrace)
+			logger.Errorf("Failed to init netlinktc for %s", n.TunnelingInterface)
 			return err
 		}
 
 		removed, err := vObject.TCDelFlowerFilters(ip)
 		if err != nil {
-			logger.Errorf("Failed to delete flower filters for interface: %v", n.TunnelingIntefrace)
+			logger.Errorf("Failed to delete flower filters for interface: %v", n.TunnelingInterface)
 			return err
 		}
 
@@ -223,9 +223,9 @@ func (n *adqConf) addTC(ip net.IP) error {
 
 	var vObject netlinktc.NetlinkTc
 	if n.Tunneling == "vxlan" {
-		vObject, err = adqtcInit(n.TunnelingIntefrace, true)
+		vObject, err = adqtcInit(n.TunnelingInterface, true)
 		if err != nil {
-			logger.Errorf("Failed to init adqtc for %s", n.TunnelingIntefrace)
+			logger.Errorf("Failed to init adqtc for %s", n.TunnelingInterface)
 			return err
 		}
 	}
@@ -262,14 +262,14 @@ func (n *adqConf) addTC(ip net.IP) error {
 
 				err := vObject.TCAddFilter(netlinktc.CreateIngressFlower, f)
 				if err != nil {
-					logger.Errorf("Failed to add filter [%+v] on Interface:%s err: %v", f, n.TunnelingIntefrace, err)
+					logger.Errorf("Failed to add filter [%+v] on Interface:%s err: %v", f, n.TunnelingInterface, err)
 					return err
 				}
 
 				f.FilterPrio = 1
 				err = vObject.TCAddFilter(netlinktc.CreateEgressFlower, f)
 				if err != nil {
-					logger.Errorf("Failed to add filter [%+v] on Interface:%s err: %v", f, n.TunnelingIntefrace, err)
+					logger.Errorf("Failed to add filter [%+v] on Interface:%s err: %v", f, n.TunnelingInterface, err)
 					return err
 				}
 
